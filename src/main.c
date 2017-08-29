@@ -200,28 +200,6 @@ void __pre_boot() {
 }
 
 
-uint32_t dfu_wr( uint32_t block_num, uint8_t** pBuff, uint32_t length,
-  uint8_t* bwPollTimeout)
-{
-  bwPollTimeout[0] = 255;
-  //bwPollTimeout[1] = 255;
-//  bwPollTimeout[2] = 255;
-  if ( length != 0 )
-  {
-    uint32_t dest_addr = DFU_DEST_BASE;
-
-    if (block_num >= DFU_MAX_BLOCKS)
-      return DFU_STATUS_errADDRESS;
-
-    dest_addr += (block_num * USB_DFU_XFER_SIZE);
-
-    //printf("wr %d %d\n", dest_addr, length);
-    //dump( (char*)&((*pBuff)[0]), length);
-    write_flash((unsigned*)dest_addr, (char*)&((*pBuff)[0]), length, (length<USB_DFU_XFER_SIZE)?1:0);
-  }
-
-  return DFU_STATUS_OK;
-}
 
 void dfu_done(void)
 {
@@ -273,9 +251,30 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			//printf("getstatus %d\n", p->dfu_state);
 			if(dfu_state == DFU_STATE_dfuDNLOAD_SYNC) {
 
-				dfu_wr(block_num, &pbuf, packet_len,  &dfu_req_get_status.bwPollTimeout);
+				dfu_req_get_status.bwPollTimeout[0] = 255;
+
+
+				uint32_t dest_addr = DFU_DEST_BASE;
+				dest_addr += (block_num * USB_DFU_XFER_SIZE);
+				if (packet_len != 0) {
+					if (block_num >= DFU_MAX_BLOCKS)
+						return DFU_STATUS_errADDRESS;
+
+					//printf("wr %d %d\n", dest_addr, length);
+					//dump( (char*)&((*pBuff)[0]), length);
+					uint8_t last = (packet_len < USB_DFU_XFER_SIZE) ? 1 : 0;
+					write_flash((unsigned*) dest_addr, buf, packet_len,	last);
+					if(last) {
+						complete = 1;
+					}
+				}
+
 
 				if(packet_len == 0) {
+					if(!complete) {
+						//force write last block
+						write_flash((unsigned*) dest_addr, buf, 0, 1);
+					}
 					dfu_state = DFU_STATE_dfuIDLE;
 					complete = 1;
 				} else {
@@ -440,19 +439,20 @@ int main(void) {
 			pUsbApi->hw->Connect(hUsb, 1);
 			LPC_GPIO->B0[21] = 1;
 		//}
-
 	} else {
 		//UARTSend((uint8_t *) "\r\nhwUSB_Init error!!!", 21);
 	}
 
-	LPC_GPIO->DIR[0] |= ((1<<4) | (1<<5));
-	LPC_GPIO->B0[4] = 1;
-	LPC_GPIO->B0[5] = 0;
+	LPC_GPIO->DIR[0] |= (1<<1);
+	//LPC_GPIO->B0[1] = 0;
 
 	while (1) {
 
-		if((u32Milliseconds & 127) == 127) {
-			LPC_GPIO->NOT[0] = (1<<4) | (1<<5);
+		if((u32Milliseconds & 511) < 256) {
+			LPC_GPIO->B0[1] = 1;
+		} else
+		if((u32Milliseconds & 511) > 256) {
+			LPC_GPIO->B0[1] = 0;
 		}
 
 		if(u32Milliseconds > 10000 && dfu_state == DFU_STATE_dfuIDLE) {
@@ -462,9 +462,9 @@ int main(void) {
 			u32Milliseconds = 0;
 		}
 
-		if(!LPC_GPIO->B0[1]) {
-			NVIC_SystemReset();
-		}
+//		if(!LPC_GPIO->B0[1]) {
+//			NVIC_SystemReset();
+//		}
 
 	}
 }
