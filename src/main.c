@@ -187,24 +187,45 @@ void app_exec() {
 //			"B p\n": : [value] "r" (address));
 }
 
+void enable_wdt(uint32_t timeout_us) {
+	  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<15);
+
+	  LPC_SYSCON->WDTOSCCTRL = 0x03F; /* ~8kHz */
+	  LPC_SYSCON->PDRUNCFG &= ~(0x1<<6);
+
+	  LPC_WWDT->CLKSEL = 0x01 | (1<<31);		/* Select watchdog osc */
+
+	  //125us is one clock at 8khz
+	  LPC_WWDT->TC = timeout_us / 128;	/* once WDEN is set, the WDT will start after feeding */
+
+
+	  LPC_WWDT->MOD = (1<<0) | (1<<1) | (1<<5); //WDEN | WDRESET | WDLOCK
+
+	  LPC_WWDT->FEED = 0xAA;		/* Feeding sequence */
+	  LPC_WWDT->FEED = 0x55;
+}
+
 void __default_exit() {
 	NVIC_SystemReset();
 }
 
 void __early_init() {
+	LPC_PMU->GPREG3++;
 
-	if(LPC_PMU->GPREG3 & 0x01) {
-		LPC_PMU->GPREG3 &= ~0x01;
+	if(LPC_PMU->GPREG3 > 4) {
+		LPC_PMU->GPREG3 = 0;
 		return;
 	}
 
 	if(user_code_present()) {
+		enable_wdt(1000000);
 		app_exec();
 	}
 }
 
 void __late_init() {
-
+	SystemInit();
+	__enable_irq();
 }
 
 
