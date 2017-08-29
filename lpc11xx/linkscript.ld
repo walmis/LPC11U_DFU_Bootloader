@@ -30,8 +30,10 @@ PROVIDE(__ram_start = ORIGIN(RAM));
 PROVIDE(__flash_start = ORIGIN(FLASH));
 PROVIDE(__ram_end   = ORIGIN(RAM) + LENGTH(RAM));
 PROVIDE(__heap_end  = ORIGIN(RAM) + LENGTH(RAM) - THREAD_STACK_SIZE - HANDLER_STACK_SIZE);
-PROVIDE(__stack_start  = ORIGIN(RAM) + LENGTH(RAM) - THREAD_STACK_SIZE - HANDLER_STACK_SIZE);
-PROVIDE(__stack_end  = ORIGIN(RAM) + LENGTH(RAM));
+
+PROVIDE(__process_stack_end__  = ORIGIN(RAM) + LENGTH(RAM) - THREAD_STACK_SIZE - HANDLER_STACK_SIZE);
+PROVIDE(__main_stack_base__  = ORIGIN(RAM) + LENGTH(RAM) - THREAD_STACK_SIZE - HANDLER_STACK_SIZE);
+PROVIDE(__main_stack_end__  = ORIGIN(RAM) + LENGTH(RAM));
 
 /* In the M0, there is no VTOR. In the LPC range such as the LPC11U,
  * whilst the vector table may only be something like 48 entries (192 bytes, 0xC0), 
@@ -223,8 +225,8 @@ SECTIONS
 	/* initialized variables */
 	.data : ALIGN (8)
 	{
-		__data_load = LOADADDR (.data);		/* address in FLASH */
-		__data_start = .;					/* address in RAM */
+		_textdata = LOADADDR (.data);		/* address in FLASH */
+		_data = .;					/* address in RAM */
 		
 		KEEP(*(.jcr))
 		*(.got.plt) *(.got)
@@ -233,7 +235,7 @@ SECTIONS
 		*(.data .data.* .gnu.linkonce.d.*)
 		
 		. = ALIGN (4);
-		__data_end = .;
+		_edata = .;
 	} >RAM AT>FLASH
 	
 	.noinit :
@@ -252,14 +254,14 @@ SECTIONS
 	.bss (NOLOAD) :
 	{
 		. = ALIGN(4);
-		__bss_start = . ;
+		_bss_start = . ;
 
 		*(.bss .bss.*)
 		*(.gnu.linkonce.b*)
 		*(COMMON)
 
 		. = ALIGN(4);
-		__bss_end = . ;
+		_bss_end = . ;
 	} >RAM
 	
 	. = ALIGN (4);

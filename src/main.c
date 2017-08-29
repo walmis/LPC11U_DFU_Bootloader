@@ -19,7 +19,7 @@
  * use without further testing or modification.
  **********************************************************************/
 #include <string.h>
-#include "LPC11Uxx.h"            
+#include "LPC11Uxx.h"
 #include "mw_usbd_rom_api.h"
 #include <power_api.h>
 #include <uart.h>
@@ -71,7 +71,7 @@ WBVAL( /* wTotalLength */
 };
 
 /**********************************************************************
- ** Global data 
+ ** Global data
  **********************************************************************/
 volatile uint32_t u32Milliseconds = 0;
 
@@ -157,7 +157,7 @@ void USB_pin_clk_init(void) {
  *
  * Option 2 is the one to go for, as RAM is the most valuable resource
  */
-inline void app_exec() {
+void app_exec() {
 	//memcpy((void*)0x10000000, (void*)0x1000, 0xC0); //copy app vector table to sram
 
 	uint32_t * const ram_base = 0x10000000;
@@ -187,7 +187,11 @@ inline void app_exec() {
 //			"B p\n": : [value] "r" (address));
 }
 
-void __pre_boot() {
+void __default_exit() {
+	NVIC_SystemReset();
+}
+
+void __early_init() {
 
 	if(LPC_PMU->GPREG3 & 0x01) {
 		LPC_PMU->GPREG3 &= ~0x01;
@@ -197,6 +201,10 @@ void __pre_boot() {
 	if(user_code_present()) {
 		app_exec();
 	}
+}
+
+void __late_init() {
+
 }
 
 
@@ -470,13 +478,13 @@ int main(void) {
 }
 
 /**********************************************************************
- ** Function name:		
+ ** Function name:
  **
- ** Description:		
- **						
- ** Parameters:			
+ ** Description:
  **
- ** Returned value:		
+ ** Parameters:
+ **
+ ** Returned value:
  **********************************************************************/
 void SysTick_Handler(void) {
 	u32Milliseconds++;
