@@ -309,6 +309,8 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 				} else {
 					dfu_state = DFU_STATE_dfuDNLOAD_IDLE;
 				}
+				//reset boot counter
+				if(complete) LPC_PMU->GPREG3 = 0;
 			}
 			dfu_req_get_status.bState = dfu_state;
 			dfu_req_get_status.bStatus = dfu_status;
