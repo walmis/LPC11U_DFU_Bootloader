@@ -24,6 +24,7 @@
 #include <power_api.h>
 #include <uart.h>
 #include <sbl_iap.h>
+#include <stdlib.h>
 
 extern ErrorCode_t usb_dfu_init(USBD_HANDLE_T hUsb,
 		USB_INTERFACE_DESCRIPTOR* pIntfDesc, uint32_t* mem_base,
@@ -33,6 +34,73 @@ extern ErrorCode_t usb_dfu_init(USBD_HANDLE_T hUsb,
 extern uint8_t USB_DeviceDescriptor[];
 extern uint8_t USB_StringDescriptor[];
 extern uint8_t USB_FsConfigDescriptor[];
+
+
+
+char* ltoa( long value, char *string, int radix )
+{
+  char tmp[33];
+  char *tp = tmp;
+  long i;
+  unsigned long v;
+  int sign;
+  char *sp;
+
+  if ( string == NULL )
+  {
+    return 0 ;
+  }
+
+  if (radix > 36 || radix <= 1)
+  {
+    return 0 ;
+  }
+
+  sign = (radix == 10 && value < 0);
+  if (sign)
+  {
+    v = -value;
+  }
+  else
+  {
+    v = (unsigned long)value;
+  }
+
+  while (v || tp == tmp)
+  {
+    i = v % radix;
+    v = v / radix;
+    if (i < 10)
+      *tp++ = i+'0';
+    else
+      *tp++ = i + 'a' - 10;
+  }
+
+  sp = string;
+
+  if (sign)
+    *sp++ = '-';
+  while (tp > tmp)
+    *sp++ = *--tp;
+  *sp = 0;
+
+  return string;
+}
+
+void putHex(int i) {
+	char str[32];
+	ltoa(i, str, 16);
+	UARTSend(str, strlen(str));
+}
+void putDec(int i) {
+	char str[32];
+	ltoa(i, str, 10);
+	UARTSend(str, strlen(str));
+}
+
+void print(char* str) {
+	UARTSend(str, strlen(str));
+}
 
 ErrorCode_t USB_Configure_Event(USBD_HANDLE_T hUsb) {
 	return LPC_OK;
@@ -240,6 +308,8 @@ void dfu_done(void)
 
 uint8_t dfu_state = DFU_STATE_dfuIDLE;
 
+
+
 ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 	USB_CORE_CTRL_T* pCtrl = (USB_CORE_CTRL_T*)hUsb;
 	//USBD_DFU_CTRL_T* p = (USBD_DFU_CTRL_T*)data;
@@ -295,7 +365,10 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 					//printf("wr %d %d\n", dest_addr, length);
 					//dump( (char*)&((*pBuff)[0]), length);
 					uint8_t last = (packet_len < USB_DFU_XFER_SIZE) ? 1 : 0;
-					write_flash((unsigned*) dest_addr, buf, packet_len,	last);
+					if(write_flash((unsigned*) dest_addr, buf, packet_len,	last) == 1) {
+						dfu_status = DFU_STATUS_errPROG;
+						break;
+					}
 					if(last) {
 						complete = 1;
 					}
@@ -305,7 +378,10 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 				if(packet_len == 0) {
 					if(!complete) {
 						//force write last block
-						write_flash((unsigned*) dest_addr, buf, 0, 1);
+						if(write_flash((unsigned*) dest_addr, buf, 0, 1) == 1) {
+							dfu_status = DFU_STATUS_errPROG;
+							break;
+						}
 					}
 					dfu_state = DFU_STATE_dfuIDLE;
 					complete = 1;
@@ -319,6 +395,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			dfu_req_get_status.bStatus = dfu_status;
 			dfu_req_get_status.iString = 0;
 			dfu_req_get_status.bwPollTimeout[0] = 255;
+
 
 	        pCtrl->EP0Data.pData = &dfu_req_get_status;                              /* point to data to be sent */
 	        pCtrl->EP0Data.Count = sizeof(dfu_req_get_status);
@@ -372,11 +449,16 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			pCtrl->EP0Data.Count = 0;
 	        pUsbApi->core->DataInStage(hUsb);
 	        return LPC_OK;
-		//default:
+
+		default:
 			//printf("unk request %d %d\n", pCtrl->SetupPacket.bRequest);
+			//print("unk req "); putDec(pCtrl->SetupPacket.bRequest); print("\n");
+			break;
+
 
 		}
 	}
+	//UARTSend("Un", 2);
 	return ERR_USBD_UNHANDLED;
 }
 /* Main Program */
@@ -407,8 +489,8 @@ int main(void) {
 	//SystemCoreClockUpdate();
 
 	/* Setup UART for 115.2K, 8 data bits, no parity, 1 stop bit */
-	//UARTInit(115200);
-	//UARTSend((uint8_t *) "\r\nLPC11Uxx USB ROMAPI example>", 31);
+	UARTInit(115200);
+	UARTSend((uint8_t *) "\r\nBoot>\r\n", 9);
 
 	/* get USB API table pointer */
 	pUsbApi = (USBD_API_T*) ((*(ROM **) (0x1FFF1FF8))->pUSBD);

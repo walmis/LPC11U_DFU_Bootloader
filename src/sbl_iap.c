@@ -16,6 +16,7 @@
 #include <app_usbd_cfg.h>
 #include <string.h>
 #include "LPC11Uxx.h"            
+#include <uart.h>
 
 unsigned param_table[5];
 unsigned result_table[5];
@@ -53,12 +54,14 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 		/* We have accumulated enough bytes to trigger a flash write */
 		find_erase_prepare_sector(cclk, (unsigned) flash_address);
 		if (result_table[0] != CMD_SUCCESS) {
+			__enable_irq();
 			UARTSend("wr error0\n", 10);
 			return 1;
 		}
 		write_data(cclk, (unsigned) flash_address, (unsigned *) flash_buf,
 				FLASH_BUF_SIZE);
 		if (result_table[0] != CMD_SUCCESS) {
+			__enable_irq();
 			UARTSend("wr error1\n", 10);
 			return 1;
 		}
@@ -84,7 +87,13 @@ void find_erase_prepare_sector(unsigned cclk, unsigned flash_address)
             if( flash_address == SECTOR_0_START_ADDR + (SECTOR_SIZE * i))
             {
                 prepare_sector_usb(i,i,cclk);
+                if (result_table[0] != CMD_SUCCESS) {
+                	return;
+                }
                 erase_sector_usb(i,i,cclk);
+                if (result_table[0] != CMD_SUCCESS) {
+                	return;
+                }
             }
             prepare_sector_usb(i,i,cclk);
             break;
