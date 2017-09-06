@@ -210,6 +210,9 @@ void __default_exit() {
 }
 
 void __early_init() {
+	LPC_GPIO->DIR[0] |= (1 << 21);
+	LPC_GPIO->B0[21] = 0; //pull usb-connect LOW
+
 	LPC_PMU->GPREG3++;
 
 	if(LPC_PMU->GPREG3 > 4) {
