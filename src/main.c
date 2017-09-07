@@ -35,8 +35,6 @@ extern uint8_t USB_DeviceDescriptor[];
 extern uint8_t USB_StringDescriptor[];
 extern uint8_t USB_FsConfigDescriptor[];
 
-
-
 char* ltoa( long value, char *string, int radix )
 {
   char tmp[33];
@@ -100,6 +98,102 @@ void putDec(int i) {
 
 void print(char* str) {
 	UARTSend(str, strlen(str));
+}
+
+typedef struct {
+    unsigned int word0; //Word 0 of 128-bit signature (bits 31 to 0).
+    unsigned int word1; //Word 1 of 128-bit signature (bits 63 to 32).
+    unsigned int word2; //Word 2 of 128-bit signature (bits 95 to 64).
+    unsigned int word3; //Word 3 of 128-bit signature (bits 127 to 96).
+} FLASH_SIG_Type;
+
+void hardSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
+{
+    //Make sure the done flag is cleared
+    LPC_FLASHCTRL->FMSTATCLR = (1 << 2);
+
+    //Convert the byte addresses to 128-bit flash word addresses
+    startAddr = (startAddr >> 4) & 0x0001ffff;
+    length = (startAddr + ((length - 1) >> 4)) & 0x0001ffff;
+    //length = length>>4;
+
+    //Write the start address
+    LPC_FLASHCTRL->FMSSTART = startAddr;
+	//print("Start");
+	//putHex(startAddr); print(" ");
+    //Write stop address and start the signature generator
+    LPC_FLASHCTRL->FMSSTOP = (length) | (1 << 17);
+	//print("End");
+	//putHex(length); print("\n");
+
+
+    //Wait for signature to be generated
+    while(!(LPC_FLASHCTRL->FMSTAT & (1 << 2)));
+
+    //Clear the done flag
+    LPC_FLASHCTRL->FMSTATCLR = (1 << 2);
+
+    //Store the signature words in the structure
+    pSig->word0 = LPC_FLASHCTRL->FMSW0;
+    pSig->word1 = LPC_FLASHCTRL->FMSW1;
+    pSig->word2 = LPC_FLASHCTRL->FMSW2;
+    pSig->word3 = LPC_FLASHCTRL->FMSW3;
+}
+
+void softSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
+{
+    FLASH_SIG_Type flashWord;
+    FLASH_SIG_Type refSignature = {0, 0, 0, 0};
+    FLASH_SIG_Type nextSign;
+    unsigned int* PageAddr = (uint32_t*)(startAddr);
+
+   for (unsigned int i = 0; i < (length >> 4); i++) {
+        flashWord.word0 = *PageAddr;
+        PageAddr++;
+        flashWord.word1 = *PageAddr;
+        PageAddr++;
+        flashWord.word2 = *PageAddr;
+        PageAddr++;
+        flashWord.word3 = *PageAddr;
+        PageAddr++;
+
+        //Update 128 bit signature
+        nextSign.word0 = flashWord.word0 ^ refSignature.word0 >> 1 ^ refSignature.word1 << 31;
+        nextSign.word1 = flashWord.word1 ^ refSignature.word1 >> 1 ^ refSignature.word2 << 31;
+        nextSign.word2 = flashWord.word2 ^ refSignature.word2 >> 1 ^ refSignature.word3 << 31;
+        nextSign.word3 = flashWord.word3 ^ refSignature.word3 >> 1 ^
+                         (refSignature.word0 & 1 << 29) << 2 ^
+                         (refSignature.word0 & 1 << 27) << 4 ^
+                         (refSignature.word0 & 1 << 2) << 29 ^
+                         (refSignature.word0 & 1 << 0) << 31;
+
+        //Point to the calculated value
+        refSignature.word0 = nextSign.word0;
+        refSignature.word1 = nextSign.word1;
+        refSignature.word2 = nextSign.word2;
+        refSignature.word3 = nextSign.word3;
+    }
+
+    //Copy the reference signature to the result pointer
+    pSig->word0 = refSignature.word0;
+    pSig->word1 = refSignature.word1;
+    pSig->word2 = refSignature.word2;
+    pSig->word3 = refSignature.word3;
+
+}
+
+void check_signature() {
+	FLASH_SIG_Type sig;
+	int len  = *((uint32_t*)(0x10D0));
+	softSig(0x10E0, len, &sig);
+
+	putDec(len); print("\n");
+	print("Signature ");
+	putHex(sig.word0); print(" ");
+	putHex(sig.word1); print(" ");
+	putHex(sig.word2); print(" ");
+	putHex(sig.word3); print("\n");
+
 }
 
 ErrorCode_t USB_Configure_Event(USBD_HANDLE_T hUsb) {
@@ -319,10 +413,10 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 	static uint8_t buf[64];
 	static const uint8_t* pbuf = buf;
 	static uint8_t complete;
-
-
 	static uint8_t dfu_status;
 	static DFU_STATUS_T dfu_req_get_status;
+
+	int error = 0;
 
 //	printf("ev %d bmRequestType:%x bRequest:%x\n", event, pCtrl->SetupPacket.bmRequestType.B,
 //			pCtrl->SetupPacket.bRequest);
@@ -330,12 +424,14 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 	if(event == USB_EVT_RESET && complete) {
 		usb_connect(0);
 		//app_exec(0x1000);
+		//print("reset\n");
 
 		NVIC_SystemReset();
 	}
 
 	if(event == USB_EVT_OUT) {
 		if(pCtrl->SetupPacket.bRequest == USB_REQ_DFU_DNLOAD) {
+			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 			pCtrl->EP0Data.Count = 0;
 	        pUsbApi->core->StatusInStage(hUsb);
 			return LPC_OK;
@@ -346,7 +442,8 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		//printf("%d\n", p->dfu_state);
 		switch(pCtrl->SetupPacket.bRequest) {
 		case USB_REQ_DFU_DETACH:
-
+			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
+			pCtrl->EP0Data.Count = 0;
 			pUsbApi->core->DataInStage(hUsb);
 			return LPC_OK;
 		case USB_REQ_DFU_GETSTATUS:
@@ -354,20 +451,20 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			if(dfu_state == DFU_STATE_dfuDNLOAD_SYNC) {
 
 				dfu_req_get_status.bwPollTimeout[0] = 255;
-
+				dfu_req_get_status.bwPollTimeout[1] = 1;
 
 				uint32_t dest_addr = DFU_DEST_BASE;
 				dest_addr += (block_num * USB_DFU_XFER_SIZE);
 				if (packet_len != 0) {
 					if (block_num >= DFU_MAX_BLOCKS)
-						return DFU_STATUS_errADDRESS;
+						dfu_status = DFU_STATUS_errADDRESS;
 
 					//printf("wr %d %d\n", dest_addr, length);
 					//dump( (char*)&((*pBuff)[0]), length);
 					uint8_t last = (packet_len < USB_DFU_XFER_SIZE) ? 1 : 0;
 					if(write_flash((unsigned*) dest_addr, buf, packet_len,	last) == 1) {
 						dfu_status = DFU_STATUS_errPROG;
-						break;
+						error = 1;
 					}
 					if(last) {
 						complete = 1;
@@ -380,7 +477,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 						//force write last block
 						if(write_flash((unsigned*) dest_addr, buf, 0, 1) == 1) {
 							dfu_status = DFU_STATUS_errPROG;
-							break;
+							error = 1;
 						}
 					}
 					dfu_state = DFU_STATE_dfuIDLE;
@@ -391,19 +488,21 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 				//reset boot counter
 				if(complete) LPC_PMU->GPREG3 = 0;
 			}
+
 			dfu_req_get_status.bState = dfu_state;
 			dfu_req_get_status.bStatus = dfu_status;
 			dfu_req_get_status.iString = 0;
 			dfu_req_get_status.bwPollTimeout[0] = 255;
 
-
-	        pCtrl->EP0Data.pData = &dfu_req_get_status;                              /* point to data to be sent */
+			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
+			memcpy(pCtrl->EP0Data.pData, &dfu_req_get_status, sizeof(dfu_req_get_status));
 	        pCtrl->EP0Data.Count = sizeof(dfu_req_get_status);
 	        pUsbApi->core->DataInStage(hUsb);
 	        return LPC_OK;
 
 		break;
 		case USB_REQ_DFU_GETSTATE:
+			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 			pCtrl->EP0Data.pData[0] = &dfu_state;
 	        pCtrl->EP0Data.Count = sizeof(dfu_state);
 	        pUsbApi->core->DataInStage(hUsb);
@@ -425,6 +524,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		      dfu_state = DFU_STATUS_errADDRESS;
 		    }
 
+		    pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 		    memcpy(pCtrl->EP0Data.pData, (void*)src_addr, pCtrl->SetupPacket.wLength);
 		    pCtrl->EP0Data.Count = pCtrl->SetupPacket.wLength;
 		    pUsbApi->core->DataInStage(hUsb);
@@ -432,8 +532,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			return LPC_OK;
 		}
 		case USB_REQ_DFU_DNLOAD:
-
-			//printf("dload %d %d\n", pCtrl->SetupPacket.wValue, pCtrl->SetupPacket.wLength);
+			//print("dload "); putDec(pCtrl->SetupPacket.wLength); print("\n");
 
 			dfu_state = DFU_STATE_dfuDNLOAD_SYNC;
 			block_num = pCtrl->SetupPacket.wValue.W;
@@ -444,14 +543,20 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 	        pUsbApi->core->DataOutStage(hUsb);
 			return LPC_OK;
 		break;
+
+		case USB_REQ_DFU_CLRSTATUS:
 		case USB_REQ_DFU_ABORT:
 			dfu_state = DFU_STATE_dfuIDLE;
+			dfu_status = 0;
+			packet_len = 0;
+			block_num = 0;
+
+			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 			pCtrl->EP0Data.Count = 0;
 	        pUsbApi->core->DataInStage(hUsb);
 	        return LPC_OK;
 
 		default:
-			//printf("unk request %d %d\n", pCtrl->SetupPacket.bRequest);
 			//print("unk req "); putDec(pCtrl->SetupPacket.bRequest); print("\n");
 			break;
 
@@ -474,7 +579,35 @@ ErrorCode_t usb_dfu_init(USBD_HANDLE_T hUsb, USB_INTERFACE_DESCRIPTOR* pIntfDesc
   return LPC_OK;
 }
 
+void uart_init() {
+	  LPC_IOCON->PIO0_18 &= ~0x07;    /*  UART I/O config */
+	  LPC_IOCON->PIO0_18 |= 0x01;     /* UART RXD */
+	  LPC_IOCON->PIO0_19 &= ~0x07;
+	  LPC_IOCON->PIO0_19 |= 0x01;     /* UART TXD */
 
+	  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<12);
+	  LPC_SYSCON->UARTCLKDIV = 0x1;     /* divided by 1 */
+
+	  LPC_USART->LCR = 0x83;            /* 8 bits, no Parity, 1 Stop bit */
+
+	  uint32_t Fdiv = ((48000000/1)/16)/115200 ;	/*baud rate */
+	  LPC_USART->DLM = Fdiv / 256;
+	  LPC_USART->DLL = Fdiv % 256;
+	  LPC_USART->FDR = 0x10;		/* Default */
+
+	  LPC_USART->LCR = 0x03;		/* DLAB = 0 */
+	  LPC_USART->FCR = 0x07;		/* Enable and reset TX and RX FIFO. */
+
+	  /* Read to clear the line status. */
+	  int regVal = LPC_USART->LSR;
+
+	  /* Ensure a clean start, no data in either TX or RX FIFO. */
+	  while (( LPC_USART->LSR & (LSR_THRE|LSR_TEMT)) != (LSR_THRE|LSR_TEMT) );
+	  while ( LPC_USART->LSR & LSR_RDR )
+	  {
+		regVal = LPC_USART->RBR;	/* Dump data from RX FIFO */
+	  }
+}
 /*****************************************************************************
  **   Main Function  main()
  *****************************************************************************/
@@ -489,8 +622,13 @@ int main(void) {
 	//SystemCoreClockUpdate();
 
 	/* Setup UART for 115.2K, 8 data bits, no parity, 1 stop bit */
-	UARTInit(115200);
+	uart_init();
+
+
+
 	UARTSend((uint8_t *) "\r\nBoot>\r\n", 9);
+
+	check_signature();
 
 	/* get USB API table pointer */
 	pUsbApi = (USBD_API_T*) ((*(ROM **) (0x1FFF1FF8))->pUSBD);
@@ -516,51 +654,18 @@ int main(void) {
 	/* USB Initialization */
 	ret = pUsbApi->hw->Init(&hUsb, &desc, &usb_param);
 
-	if (ret == LPC_OK) {
+	pUsbApi->core->RegisterClassHandler(hUsb, dfu_ep0, 0);
 
-		pD = (USB_COMMON_DESCRIPTOR *) desc.high_speed_desc;
-		next_desc_adr = (uint32_t) desc.high_speed_desc;
+	init_usb_iap();
 
-		while (pD->bLength) {
-			if (pD->bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE) {
+	NVIC_EnableIRQ(USB_IRQn); //  enable USB interrrupts
+	//UARTSend((uint8_t *) "Connect\r\n", 9);
+	/* now connect */
+	pUsbApi->hw->Connect(hUsb, 1);
+	LPC_GPIO->B0[21] = 1;
 
-				pIntfDesc = (USB_INTERFACE_DESCRIPTOR*) pD;
-
-				switch (pIntfDesc->bInterfaceClass) {
-				case USB_DEVICE_CLASS_APP:
-					ret = usb_dfu_init(hUsb, pIntfDesc, &usb_param.mem_base,
-							&usb_param.mem_size);
-					//UARTSend((uint8_t *) "DFU INIT\r\n", 10);
-					if (ret != LPC_OK)
-						//UARTSend((uint8_t *) "\r\n usb_dfu_init error!!!", 27);
-					break;
-				}
-				if (ret != LPC_OK)
-					break; /* break while loop no point proceeding further */
-			}
-			pIntfDesc = 0;
-			total_len += pD->bLength;
-			next_desc_adr = (uint32_t) pD + pD->bLength;
-			pD = (USB_COMMON_DESCRIPTOR*) next_desc_adr;
-		}
-
-//		if (total_len
-//				!= ((USB_CONFIGURATION_DESCRIPTOR *) desc.high_speed_desc)->wTotalLength)
-			//UARTSend((uint8_t *) "\r\nBadly formed config descriptor!!!", 38);
-
-		//if (ret == LPC_OK) {
-			NVIC_EnableIRQ(USB_IRQn); //  enable USB interrrupts
-			//UARTSend((uint8_t *) "Connect\r\n", 9);
-			/* now connect */
-			pUsbApi->hw->Connect(hUsb, 1);
-			LPC_GPIO->B0[21] = 1;
-		//}
-	} else {
-		//UARTSend((uint8_t *) "\r\nhwUSB_Init error!!!", 21);
-	}
 
 	LPC_GPIO->DIR[0] |= (1<<1);
-	//LPC_GPIO->B0[1] = 0;
 
 	while (1) {
 

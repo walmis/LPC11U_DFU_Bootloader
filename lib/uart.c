@@ -20,7 +20,7 @@
 * use without further testing or modification.
 
 * Permission to use, copy, modify, and distribute this software and its 
-* documentation is hereby granted, under NXP Semiconductors’ 
+* documentation is hereby granted, under NXP Semiconductorsï¿½ 
 * relevant copyright in the software, without fee, provided that it 
 * is used in conjunction with NXP Semiconductors microcontrollers.  This 
 * copyright, permission, and disclaimer notice must appear in all copies of 
@@ -50,6 +50,7 @@ volatile uint32_t UARTAutoBaud = 0, AutoBaudTimeout = 0;
 ** Returned value:		None
 ** 
 *****************************************************************************/
+#if 0 //disable to save flash
 void UART_IRQHandler(void)
 {
   uint8_t IIRValue, LSRValue;
@@ -129,6 +130,7 @@ void UART_IRQHandler(void)
 #endif
   return;
 }
+#endif
 
 #if MODEM_TEST
 /*****************************************************************************
