@@ -35,6 +35,8 @@ extern uint8_t USB_DeviceDescriptor[];
 extern uint8_t USB_StringDescriptor[];
 extern uint8_t USB_FsConfigDescriptor[];
 
+uint32_t bad_signature = 0;
+
 char* ltoa( long value, char *string, int radix )
 {
   char tmp[33];
@@ -107,39 +109,6 @@ typedef struct {
     unsigned int word3; //Word 3 of 128-bit signature (bits 127 to 96).
 } FLASH_SIG_Type;
 
-void hardSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
-{
-    //Make sure the done flag is cleared
-    LPC_FLASHCTRL->FMSTATCLR = (1 << 2);
-
-    //Convert the byte addresses to 128-bit flash word addresses
-    startAddr = (startAddr >> 4) & 0x0001ffff;
-    length = (startAddr + ((length - 1) >> 4)) & 0x0001ffff;
-    //length = length>>4;
-
-    //Write the start address
-    LPC_FLASHCTRL->FMSSTART = startAddr;
-	//print("Start");
-	//putHex(startAddr); print(" ");
-    //Write stop address and start the signature generator
-    LPC_FLASHCTRL->FMSSTOP = (length) | (1 << 17);
-	//print("End");
-	//putHex(length); print("\n");
-
-
-    //Wait for signature to be generated
-    while(!(LPC_FLASHCTRL->FMSTAT & (1 << 2)));
-
-    //Clear the done flag
-    LPC_FLASHCTRL->FMSTATCLR = (1 << 2);
-
-    //Store the signature words in the structure
-    pSig->word0 = LPC_FLASHCTRL->FMSW0;
-    pSig->word1 = LPC_FLASHCTRL->FMSW1;
-    pSig->word2 = LPC_FLASHCTRL->FMSW2;
-    pSig->word3 = LPC_FLASHCTRL->FMSW3;
-}
-
 void softSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
 {
     FLASH_SIG_Type flashWord;
@@ -182,18 +151,22 @@ void softSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
 
 }
 
-void check_signature() {
+int check_signature() {
 	FLASH_SIG_Type sig;
 	int len  = *((uint32_t*)(0x10D0));
+	uint32_t* signature = ((uint32_t*)(0x10C0));
 	softSig(0x10E0, len, &sig);
 
-	putDec(len); print("\n");
-	print("Signature ");
-	putHex(sig.word0); print(" ");
-	putHex(sig.word1); print(" ");
-	putHex(sig.word2); print(" ");
-	putHex(sig.word3); print("\n");
+//	putDec(len); print("\n");
+//	print("Signature ");
+//	putHex(sig.word0); print(" ");
+//	putHex(sig.word1); print(" ");
+//	putHex(sig.word2); print(" ");
+//	putHex(sig.word3); print("\n");
 
+	int res = sig.word0 == signature[0] && sig.word1 == signature[1] && sig.word2 == signature[2] && sig.word3 == signature[3];
+	//if(!res) print("Verification failed\n");
+	return res;
 }
 
 ErrorCode_t USB_Configure_Event(USBD_HANDLE_T hUsb) {
@@ -382,9 +355,11 @@ void __early_init() {
 		return;
 	}
 
-	if(user_code_present()) {
+	if(check_signature()) {
 		enable_wdt(1000000);
 		app_exec();
+	} else {
+		bad_signature = 1;
 	}
 }
 
@@ -451,7 +426,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			if(dfu_state == DFU_STATE_dfuDNLOAD_SYNC) {
 
 				dfu_req_get_status.bwPollTimeout[0] = 255;
-				dfu_req_get_status.bwPollTimeout[1] = 1;
+				dfu_req_get_status.bwPollTimeout[1] = 0;
 
 				uint32_t dest_addr = DFU_DEST_BASE;
 				dest_addr += (block_num * USB_DFU_XFER_SIZE);
@@ -482,11 +457,18 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 					}
 					dfu_state = DFU_STATE_dfuIDLE;
 					complete = 1;
+
 				} else {
 					dfu_state = DFU_STATE_dfuDNLOAD_IDLE;
 				}
 				//reset boot counter
-				if(complete) LPC_PMU->GPREG3 = 0;
+				if(complete){
+					if(!check_signature()) {
+						dfu_status = DFU_STATUS_errVERIFY;
+						print("Boot> Verification failed\n");
+					}
+					LPC_PMU->GPREG3 = 0;
+				}
 			}
 
 			dfu_req_get_status.bState = dfu_state;
@@ -628,7 +610,9 @@ int main(void) {
 
 	UARTSend((uint8_t *) "\r\nBoot>\r\n", 9);
 
-	check_signature();
+	if(bad_signature) {
+		print("Boot> Bad signature\n");
+	}
 
 	/* get USB API table pointer */
 	pUsbApi = (USBD_API_T*) ((*(ROM **) (0x1FFF1FF8))->pUSBD);
