@@ -79,7 +79,7 @@ uint8_t USB_FsConfigDescriptor[] = {
   USB_DFU_CAN_DOWNLOAD | USB_DFU_CAN_UPLOAD | USB_DFU_MANIFEST_TOL | USB_DFU_WILL_DETACH, /* bmAttributes */
   WBVAL(0xFF00),                     /* wDetachTimeout */
   WBVAL(USB_DFU_XFER_SIZE),          /* wTransferSize */
-  WBVAL(0x100),                      /* bcdDFUVersion */
+  WBVAL(0x0110),                      /* bcdDFUVersion */
 /* Terminator */
   0                                  /* bLength */
 };
@@ -117,7 +117,7 @@ uint8_t USB_HsConfigDescriptor[] = {
   USB_DFU_CAN_DOWNLOAD | USB_DFU_CAN_UPLOAD | USB_DFU_MANIFEST_TOL, /* bmAttributes */
   WBVAL(0xFF00),                     /* wDetachTimeout */
   WBVAL(USB_DFU_XFER_SIZE),          /* wTransferSize */
-  WBVAL(0x100),                      /* bcdDFUVersion */
+  WBVAL(0x0110),                      /* bcdDFUVersion */
   /* Terminator */
   0                                  /* bLength */
 };

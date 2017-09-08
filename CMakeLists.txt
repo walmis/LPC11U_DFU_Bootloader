@@ -38,14 +38,13 @@ SET(SOURCES
   lpc11xx/cmsis/system_LPC11xx.c
   lpc11xx/crt0_v6m.S
   lpc11xx/LPC11Uxx_handlers.c
-  src/lpc11uxx_usbd_dfu.c
   src/dfu_lpc11uxx_usbdesc.c
   src/sbl_iap.c
   #src/print.cpp
   lib/uart.c
 )
 
-project(${PROJECT_NAME} CXX C ASM)
+project(${PROJECT_NAME} C ASM)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 

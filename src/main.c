@@ -36,8 +36,6 @@ extern uint8_t USB_DeviceDescriptor[];
 extern uint8_t USB_StringDescriptor[];
 extern uint8_t USB_FsConfigDescriptor[];
 
-uint32_t bad_signature = 0;
-
 char* ltoa( long value, char *string, int radix )
 {
   char tmp[33];
@@ -93,6 +91,16 @@ void putHex(int i) {
 	ltoa(i, str, 16);
 	UARTSend(str, strlen(str));
 }
+void putHexByte(char i) {
+	char str[32];
+	ltoa(i, str, 16);
+	if(str[1] == '\0') {
+		str[2] = '\0';
+		str[1] = str[0];
+		str[0] = '0';
+	}
+	UARTSend(str, strlen(str));
+}
 void putDec(int i) {
 	char str[32];
 	ltoa(i, str, 10);
@@ -101,6 +109,16 @@ void putDec(int i) {
 
 void print(char* str) {
 	UARTSend(str, strlen(str));
+}
+
+void printbuf(char* buf, int len) {
+	int i = 0;
+	while(len--) {
+		putHexByte(*buf++); print(" ");
+		i++;
+		if(i >= 16) { print("\n"); i = 0; }
+	}
+	print("\n");
 }
 
 typedef struct {
@@ -116,6 +134,14 @@ void softSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
     FLASH_SIG_Type refSignature = {0, 0, 0, 0};
     FLASH_SIG_Type nextSign;
     unsigned int* PageAddr = (uint32_t*)(startAddr);
+
+    if(length > DFU_MAX_IMAGE_LEN) {
+    	pSig->word0 = 0;
+    	pSig->word1 = 0;
+    	pSig->word2 = 0;
+    	pSig->word3 = 0;
+    	return;
+    }
 
    for (unsigned int i = 0; i < (length >> 4); i++) {
         flashWord.word0 = *PageAddr;
@@ -201,7 +227,7 @@ WBVAL( /* wTotalLength */
 		USB_DFU_CAN_DOWNLOAD | USB_DFU_CAN_UPLOAD | USB_DFU_MANIFEST_TOL, /* bmAttributes */
 		WBVAL(0xFF00), /* wDetachTimeout */
 		WBVAL(USB_DFU_XFER_SIZE), /* wTransferSize */
-		WBVAL(0x100), /* bcdDFUVersion */
+		WBVAL(0x0110), /* bcdDFUVersion */
 		/* Terminator */
 		0 /* bLength */
 };
@@ -215,6 +241,18 @@ USBD_API_T* pUsbApi;
 
 /* local data */
 USBD_HANDLE_T hUsb;
+
+struct {
+	volatile uint32_t block_num;
+	volatile uint32_t packet_len;
+	volatile uint8_t buf[64];
+
+	volatile uint8_t complete;
+	volatile uint8_t dfu_status;
+	volatile uint8_t dfu_state;
+	volatile uint8_t data_pending;
+	volatile uint8_t status_req;
+} dfu;
 
 void USB_IRQHandler(void) {
 	uint32_t *addr = (uint32_t *) LPC_USB->EPLISTSTART;
@@ -371,8 +409,6 @@ void __early_init() {
 	if(check_signature()) {
 		enable_wdt(1000000);
 		app_exec();
-	} else {
-		bad_signature = 1;
 	}
 }
 
@@ -382,49 +418,46 @@ void __late_init() {
 }
 
 
-
-void dfu_done(void)
-{
-  return;
-}
-
-uint8_t dfu_state = DFU_STATE_dfuIDLE;
-
-
-
 ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 	USB_CORE_CTRL_T* pCtrl = (USB_CORE_CTRL_T*)hUsb;
 	//USBD_DFU_CTRL_T* p = (USBD_DFU_CTRL_T*)data;
-
-	static uint32_t block_num = 0;
-	static uint32_t packet_len = 0;
-	static uint8_t buf[64];
-	static const uint8_t* pbuf = buf;
-	static uint8_t complete;
-	static uint8_t dfu_status;
-	static DFU_STATUS_T dfu_req_get_status;
 
 	int error = 0;
 
 //	printf("ev %d bmRequestType:%x bRequest:%x\n", event, pCtrl->SetupPacket.bmRequestType.B,
 //			pCtrl->SetupPacket.bRequest);
 
-	if(event == USB_EVT_RESET && complete) {
-		usb_connect(0);
-		//app_exec(0x1000);
-		//print("reset\n");
+	if(event == USB_EVT_RESET) {
+		if(dfu.complete) {
+			usb_connect(0);
+			//app_exec(0x1000);
+			//print("sys reset\n");
 
-		NVIC_SystemReset();
+			NVIC_SystemReset();
+		} else {
+			//print("reset\n");
+		}
 	}
 
 	if(event == USB_EVT_OUT) {
 		if(pCtrl->SetupPacket.bRequest == USB_REQ_DFU_DNLOAD) {
-			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
-			pCtrl->EP0Data.Count = 0;
+			dfu.block_num = pCtrl->SetupPacket.wValue.W;
+			dfu.packet_len = pCtrl->SetupPacket.wLength;
+			memcpy(dfu.buf, pCtrl->EP0Buf, dfu.packet_len);
+
+			dfu.data_pending = 1;
+			//print("out "); putDec(pCtrl->SetupPacket.wValue.W); print("\n");
 	        pUsbApi->core->StatusInStage(hUsb);
 			return LPC_OK;
 		}
 	}
+	if(event == USB_EVT_IN) {
+		//print("in "); putDec(pCtrl->SetupPacket.wLength); print("\n");
+		if(pCtrl->SetupPacket.bRequest == USB_REQ_DFU_GETSTATUS) {
+			dfu.status_req = 1;
+		}
+	}
+
 	if(event == USB_EVT_SETUP && (pCtrl->SetupPacket.bmRequestType.B & 0x21)) {
 		//if(p)
 		//printf("%d\n", p->dfu_state);
@@ -434,89 +467,48 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			pCtrl->EP0Data.Count = 0;
 			pUsbApi->core->DataInStage(hUsb);
 			return LPC_OK;
-		case USB_REQ_DFU_GETSTATUS:
-			//printf("getstatus %d\n", p->dfu_state);
-			if(dfu_state == DFU_STATE_dfuDNLOAD_SYNC) {
+		case USB_REQ_DFU_GETSTATUS:{
+			DFU_STATUS_T dfu_req_get_status;
+			//print("st\n");
 
-				dfu_req_get_status.bwPollTimeout[0] = 255;
-				dfu_req_get_status.bwPollTimeout[1] = 0;
+			dfu_req_get_status.bwPollTimeout[0] = 10;
+			dfu_req_get_status.bwPollTimeout[1] = 0;
+			dfu_req_get_status.bwPollTimeout[2] = 0;
 
-				uint32_t dest_addr = DFU_DEST_BASE;
-				dest_addr += (block_num * USB_DFU_XFER_SIZE);
-				if (packet_len != 0) {
-					if (block_num >= DFU_MAX_BLOCKS)
-						dfu_status = DFU_STATUS_errADDRESS;
-
-					//printf("wr %d %d\n", dest_addr, length);
-					//dump( (char*)&((*pBuff)[0]), length);
-					uint8_t last = (packet_len < USB_DFU_XFER_SIZE) ? 1 : 0;
-					if(write_flash((unsigned*) dest_addr, buf, packet_len,	last) == 1) {
-						dfu_status = DFU_STATUS_errPROG;
-						error = 1;
-					}
-					if(last) {
-						complete = 1;
-					}
-				}
-
-
-				if(packet_len == 0) {
-					if(!complete) {
-						//force write last block
-						if(write_flash((unsigned*) dest_addr, buf, 0, 1) == 1) {
-							dfu_status = DFU_STATUS_errPROG;
-							error = 1;
-						}
-					}
-					dfu_state = DFU_STATE_dfuIDLE;
-					complete = 1;
-
-				} else {
-					dfu_state = DFU_STATE_dfuDNLOAD_IDLE;
-				}
-				//reset boot counter
-				if(complete){
-					if(!check_signature()) {
-						dfu_status = DFU_STATUS_errVERIFY;
-						print("Boot> Verification failed\n");
-					}
-					LPC_PMU->GPREG3 = 0;
-				}
-			}
-
-			dfu_req_get_status.bState = dfu_state;
-			dfu_req_get_status.bStatus = dfu_status;
+			dfu_req_get_status.bState = dfu.dfu_state;
+			dfu_req_get_status.bStatus = dfu.dfu_status;
 			dfu_req_get_status.iString = 0;
-			dfu_req_get_status.bwPollTimeout[0] = 255;
 
 			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 			memcpy(pCtrl->EP0Data.pData, &dfu_req_get_status, sizeof(dfu_req_get_status));
 	        pCtrl->EP0Data.Count = sizeof(dfu_req_get_status);
+
 	        pUsbApi->core->DataInStage(hUsb);
+		}
 	        return LPC_OK;
 
 		break;
 		case USB_REQ_DFU_GETSTATE:
 			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
-			pCtrl->EP0Data.pData[0] = &dfu_state;
-	        pCtrl->EP0Data.Count = sizeof(dfu_state);
+			pCtrl->EP0Data.pData[0] = dfu.dfu_state;
+	        pCtrl->EP0Data.Count = sizeof(dfu.dfu_state);
 	        pUsbApi->core->DataInStage(hUsb);
 	        return LPC_OK;
 
 		case USB_REQ_DFU_UPLOAD:
 		{
-			block_num = pCtrl->SetupPacket.wValue.W;
+			dfu.block_num = pCtrl->SetupPacket.wValue.W;
 
-			uint8_t* src_addr = DFU_DEST_BASE + (block_num * USB_DFU_XFER_SIZE);
+			uint8_t* src_addr = DFU_DEST_BASE + (dfu.block_num * USB_DFU_XFER_SIZE);
 		    //*pBuff = (uint8_t*)src_addr;
 		    pCtrl->EP0Data.pData = pCtrl->EP0Buf;
-		    if (block_num == DFU_MAX_BLOCKS) {
+		    if (dfu.block_num == DFU_MAX_BLOCKS) {
 		    	pCtrl->SetupPacket.wLength = 0;
 		    }
 
-		    if (block_num > DFU_MAX_BLOCKS) {
+		    if (dfu.block_num > DFU_MAX_BLOCKS) {
 		      pCtrl->SetupPacket.wLength = 0;
-		      dfu_state = DFU_STATUS_errADDRESS;
+		      dfu.dfu_state = DFU_STATUS_errADDRESS;
 		    }
 
 		    pCtrl->EP0Data.pData = pCtrl->EP0Buf;
@@ -528,23 +520,26 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		}
 		case USB_REQ_DFU_DNLOAD:
 			//print("dload "); putDec(pCtrl->SetupPacket.wLength); print("\n");
-
-			dfu_state = DFU_STATE_dfuDNLOAD_SYNC;
-			block_num = pCtrl->SetupPacket.wValue.W;
-			packet_len = pCtrl->SetupPacket.wLength;
+			if(pCtrl->SetupPacket.wLength == 0 && dfu.complete) {
+				dfu.dfu_state = DFU_STATE_dfuIDLE;
+			} else {
+				dfu.dfu_state = DFU_STATE_dfuDNLOAD_SYNC;
+			}
 
 			pCtrl->EP0Data.Count = pCtrl->SetupPacket.wLength;
-			pCtrl->EP0Data.pData = buf;
+			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 	        pUsbApi->core->DataOutStage(hUsb);
 			return LPC_OK;
 		break;
 
 		case USB_REQ_DFU_CLRSTATUS:
 		case USB_REQ_DFU_ABORT:
-			dfu_state = DFU_STATE_dfuIDLE;
-			dfu_status = 0;
-			packet_len = 0;
-			block_num = 0;
+			//print("USB_REQ_DFU_ABORT\n");
+			dfu.dfu_state = DFU_STATE_dfuIDLE;
+			dfu.dfu_status = 0;
+			dfu.packet_len = 0;
+			dfu.block_num = 0;
+			dfu.complete = 0;
 
 			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 			pCtrl->EP0Data.Count = 0;
@@ -560,18 +555,6 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 	}
 	//UARTSend("Un", 2);
 	return ERR_USBD_UNHANDLED;
-}
-/* Main Program */
-ErrorCode_t usb_dfu_init(USBD_HANDLE_T hUsb, USB_INTERFACE_DESCRIPTOR* pIntfDesc, uint32_t* mem_base, uint32_t* mem_size)
-{
-
-  //ret = pUsbApi->dfu->init(hUsb, &dfu_param, DFU_STATE_dfuIDLE);
-  pUsbApi->core->RegisterClassHandler(hUsb, dfu_ep0, 0);
-  //pUsbApi->
-  //pUsbApi->core->RegisterEpHandler(hUsb, 0, dfu_ep0, 0);
-
-  init_usb_iap();
-  return LPC_OK;
 }
 
 void uart_init() {
@@ -603,6 +586,82 @@ void uart_init() {
 		regVal = LPC_USART->RBR;	/* Dump data from RX FIFO */
 	  }
 }
+
+void HardFault_Handler(void) __attribute__((naked));
+void HardFault_Handler(void) //__attribute__((naked))
+{
+  //asm volatile("  TST LR, #4; ");
+  register long lr asm("lr");
+  if(lr & 4) {
+	  asm("mrs r0, msp");
+  } else {
+	  asm("mrs r0, psp");
+  }
+  asm("mov sp, r0");
+  asm("bkpt");
+}
+
+void process_dfu() {
+	if(dfu.dfu_state == DFU_STATE_dfuDNLOAD_SYNC && dfu.data_pending && dfu.status_req) {
+		uint32_t b = dfu.block_num;
+		uint32_t p = dfu.packet_len;
+		uint32_t dest_addr = DFU_DEST_BASE + (b * USB_DFU_XFER_SIZE);
+
+		//dfu.dfu_state = DFU_STATE_dfuDNBUSY;
+		//print("wr b:");
+//		putDec(b); print(" ");
+//		putDec(p); print(" ");
+		//putDec(dest_addr);
+		//print("\n");
+//		printbuf(dfu.buf, 64);
+
+		dfu.data_pending = 0;
+
+		//while(!dfu.status_req);
+		dfu.status_req = 0;
+		//delay(5);
+
+		if (dfu.packet_len != 0) {
+			if (dfu.block_num >= DFU_MAX_BLOCKS)
+				dfu.dfu_status = DFU_STATUS_errADDRESS;
+
+			//printf("wr %d %d\n", dest_addr, length);
+			//dump( (char*)&((*pBuff)[0]), length);
+			uint8_t last = (dfu.packet_len < USB_DFU_XFER_SIZE) ? 1 : 0;
+			if(write_flash((unsigned*) dest_addr, dfu.buf, dfu.packet_len,	last) == 1) {
+				dfu.dfu_status = DFU_STATUS_errPROG;
+			}
+			if(last) {
+				dfu.complete = 1;
+				dfu.dfu_state = DFU_STATE_dfuIDLE;
+			}
+		}
+
+
+		if(dfu.packet_len == 0) {
+			if(!dfu.complete) {
+				//force write last block
+				if(write_flash((unsigned*) dest_addr, dfu.buf, 0, 1) == 1) {
+					dfu.dfu_status = DFU_STATUS_errPROG;
+				}
+			}
+			dfu.dfu_state = DFU_STATE_dfuIDLE;
+			dfu.complete = 1;
+
+		} else {
+			dfu.dfu_state = DFU_STATE_dfuDNLOAD_IDLE;
+		}
+		//reset boot counter
+		if(dfu.complete){
+			if(!check_signature()) {
+				dfu.dfu_status = DFU_STATUS_errVERIFY;
+				print("Boot> Verification failed\n");
+			}
+			LPC_PMU->GPREG3 = 0;
+		}
+	}
+}
+
 /*****************************************************************************
  **   Main Function  main()
  *****************************************************************************/
@@ -623,7 +682,7 @@ int main(void) {
 
 	UARTSend((uint8_t *) "\r\nBoot>\r\n", 9);
 
-	if(bad_signature) {
+	if(!check_signature()) {
 		print("Boot> Bad signature\n");
 	}
 
@@ -658,17 +717,17 @@ int main(void) {
 	 */
 	usb_param.mem_base = 0x10001000 + (0x800 - usb_param.mem_size);
 
+	dfu.dfu_state = DFU_STATE_dfuIDLE;
+
 	pUsbApi->core->RegisterClassHandler(hUsb, dfu_ep0, 0);
 
 	init_usb_iap();
 
 	NVIC_EnableIRQ(USB_IRQn); //  enable USB interrrupts
-	//UARTSend((uint8_t *) "Connect\r\n", 9);
-	/* now connect */
+
 	pUsbApi->hw->Connect(hUsb, 1);
+
 	LPC_GPIO->B0[21] = 1;
-
-
 	LPC_GPIO->DIR[0] |= (1<<1);
 
 	while (1) {
@@ -680,12 +739,17 @@ int main(void) {
 			LPC_GPIO->B0[1] = 0;
 		}
 
-		if(u32Milliseconds > 10000 && dfu_state == DFU_STATE_dfuIDLE) {
+		process_dfu();
+
+		if(u32Milliseconds > 10000 && dfu.dfu_state == DFU_STATE_dfuIDLE) {
 			if(user_code_present()) {
+				print("r\n");
 				NVIC_SystemReset();
 			}
 			u32Milliseconds = 0;
 		}
+
+
 
 //		if(!LPC_GPIO->B0[1]) {
 //			NVIC_SystemReset();

@@ -39,7 +39,6 @@ void blank_check_sector(int i);
 unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 {
   unsigned enabled_irqs;
-  	__disable_irq();
 
 	if (flash_address == (unsigned *) UPDATE_REQD) {
 		/* Store flash start address */
@@ -55,7 +54,7 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 		/* We have accumulated enough bytes to trigger a flash write */
 		find_erase_prepare_sector(cclk, (unsigned) flash_address);
 		if (result_table[0] != CMD_SUCCESS) {
-			__enable_irq();
+
 			//print("wr error0 "); putDec(result_table[0]); print("\n");
 			return 1;
 		}
@@ -63,7 +62,6 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 				FLASH_BUF_SIZE);
 		//putHex(flash_address); print("\n");
 		if (result_table[0] != CMD_SUCCESS) {
-			__enable_irq();
 			//print("wr error1 "); putDec(result_table[0]); print("\n");
 			return 1;
 		}
@@ -74,7 +72,6 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 //			return 1;
 //		}
 		if(memcmp(flash_address, flash_buf, FLASH_BUF_SIZE) != 0) {
-			__enable_irq();
 			print("wr cmp error"); print("\n");
 			return 1;
 		}
@@ -83,7 +80,6 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 		byte_ctr = 0;
 		flash_address = (unsigned *) UPDATE_REQD;
 	}
-	__enable_irq();
 	return (CMD_SUCCESS);
 }
 
@@ -124,30 +120,37 @@ void find_erase_prepare_sector(unsigned cclk, unsigned flash_address)
 
 void write_data(unsigned cclk,unsigned flash_address,unsigned * flash_data_buf, unsigned count)
 {
+	__disable_irq();
     param_table[0] = COPY_RAM_TO_FLASH;
     param_table[1] = flash_address;
     param_table[2] = (unsigned)flash_data_buf;
     param_table[3] = count;
     param_table[4] = cclk;
     iap_entry(param_table,result_table);
+    __enable_irq();
 }
 
 void erase_sector_usb(unsigned start_sector,unsigned end_sector,unsigned cclk)
 {
+	__disable_irq();
     param_table[0] = ERASE_SECTOR;
     param_table[1] = start_sector;
     param_table[2] = end_sector;
     param_table[3] = cclk;
     iap_entry(param_table,result_table);
+    __enable_irq();
 }
 
 void prepare_sector_usb(unsigned start_sector,unsigned end_sector,unsigned cclk)
 {
+	__disable_irq();
     param_table[0] = PREPARE_SECTOR_FOR_WRITE;
     param_table[1] = start_sector;
     param_table[2] = end_sector;
     param_table[3] = cclk;
     iap_entry(param_table,result_table);
+    __enable_irq();
+
 }
 
 void init_usb_iap( void )
@@ -158,10 +161,12 @@ void init_usb_iap( void )
 }
 
 void blank_check_sector(int i) {
+	__disable_irq();
 	param_table[0] = BLANK_CHECK_SECTOR;
 	param_table[1] = i;
 	param_table[2] = i;
 	iap_entry(param_table, result_table);
+	__enable_irq();
 }
 
 
