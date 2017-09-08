@@ -25,6 +25,7 @@
 #include <uart.h>
 #include <sbl_iap.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 extern ErrorCode_t usb_dfu_init(USBD_HANDLE_T hUsb,
 		USB_INTERFACE_DESCRIPTOR* pIntfDesc, uint32_t* mem_base,
@@ -216,6 +217,18 @@ USBD_API_T* pUsbApi;
 USBD_HANDLE_T hUsb;
 
 void USB_IRQHandler(void) {
+	uint32_t *addr = (uint32_t *) LPC_USB->EPLISTSTART;
+	/*	WORKAROUND for artf32289 ROM driver BUG:
+	    As part of USB specification the device should respond
+	    with STALL condition for any unsupported setup packet. The host will send
+	    new setup packet/request on seeing STALL condition for EP0 instead of sending
+	    a clear STALL request. Current driver in ROM doesn't clear the STALL
+	    condition on new setup packet which should be fixed.
+	 */
+	if ( LPC_USB->DEVCMDSTAT & (1<<8) ) {	/* if setup packet is received */
+		addr[0] &= ~(1<<29);	/* clear EP0_OUT stall */
+		addr[2] &= ~(1<<29) | (1<<31);	/* clear EP0_IN stall and ACTIVE bit*/
+	}
 	pUsbApi->hw->ISR(hUsb);
 }
 
@@ -626,7 +639,7 @@ int main(void) {
 	usb_param.mem_base = 0x10001000;
 	usb_param.mem_size = 0x800;
 	usb_param.max_num_ep = 4;
-	usb_param.USB_Configure_Event = USB_Configure_Event;
+	//usb_param.USB_Configure_Event = USB_Configure_Event;
 
 	/* Initialize Descriptor pointers */
 	memset((void*) &desc, 0, sizeof(USB_CORE_DESCS_T));
@@ -637,6 +650,13 @@ int main(void) {
 
 	/* USB Initialization */
 	ret = pUsbApi->hw->Init(&hUsb, &desc, &usb_param);
+
+	/*	WORKAROUND for artf32219 ROM driver BUG:
+	    The mem_base parameter part of USB_param structure returned
+	    by Init() routine is not accurate causing memory allocation issues for
+	    further components.
+	 */
+	usb_param.mem_base = 0x10001000 + (0x800 - usb_param.mem_size);
 
 	pUsbApi->core->RegisterClassHandler(hUsb, dfu_ep0, 0);
 
