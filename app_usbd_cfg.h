@@ -47,11 +47,6 @@
 #define IDVENDOR 0xffff
 #define IDPRODUCT 0x12c9
 
-/* DFU boot definitions */
-#define DFU_DEST_BASE         0x1000
-#define DFU_MAX_IMAGE_LEN     (28 * 1024)
-#define DFU_MAX_BLOCKS        (DFU_MAX_IMAGE_LEN/USB_DFU_XFER_SIZE)
 
-#define FLASH_BUF_SIZE 512
 
 #endif  /* __USBCFG_H__ */

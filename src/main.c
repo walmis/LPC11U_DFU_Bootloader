@@ -21,6 +21,7 @@
 #include <string.h>
 #include "LPC11Uxx.h"
 #include "mw_usbd_rom_api.h"
+#include <sbl_config.h>
 #include <power_api.h>
 #include <uart.h>
 #include <sbl_iap.h>
@@ -35,6 +36,10 @@ extern ErrorCode_t usb_dfu_init(USBD_HANDLE_T hUsb,
 extern uint8_t USB_DeviceDescriptor[];
 extern uint8_t USB_StringDescriptor[];
 extern uint8_t USB_FsConfigDescriptor[];
+
+void reset_system();
+void process_dfu();
+void delay(uint32_t t);
 
 char* ltoa( long value, char *string, int radix )
 {
@@ -133,7 +138,7 @@ void softSig(unsigned int startAddr, unsigned int length, FLASH_SIG_Type *pSig)
     FLASH_SIG_Type flashWord;
     FLASH_SIG_Type refSignature = {0, 0, 0, 0};
     FLASH_SIG_Type nextSign;
-    unsigned int* PageAddr = (uint32_t*)(startAddr);
+    uint32_t* PageAddr = (uint32_t*)(startAddr);
 
     if(length > DFU_MAX_IMAGE_LEN) {
     	pSig->word0 = 0;
@@ -245,7 +250,7 @@ USBD_HANDLE_T hUsb;
 struct {
 	volatile uint32_t block_num;
 	volatile uint32_t packet_len;
-	volatile uint8_t buf[64];
+	uint8_t buf[64];
 
 	volatile uint8_t complete;
 	volatile uint8_t dfu_status;
@@ -346,8 +351,8 @@ void USB_pin_clk_init(void) {
 void app_exec() {
 	//memcpy((void*)0x10000000, (void*)0x1000, 0xC0); //copy app vector table to sram
 
-	uint32_t * const ram_base = 0x10000000;
-	const uint32_t* flash = 0x1000;
+	uint32_t * const ram_base = (uint32_t *)0x10000000;
+	const uint32_t* flash = (uint32_t *)0x1000;
 	uint32_t i;
 	for(i = 0; i < 48; i++) {
 		ram_base[i] = flash[i];
@@ -433,7 +438,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			//app_exec(0x1000);
 			//print("sys reset\n");
 
-			NVIC_SystemReset();
+			reset_system();
 		} else {
 			//print("reset\n");
 		}
@@ -445,9 +450,11 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			dfu.packet_len = pCtrl->SetupPacket.wLength;
 			memcpy(dfu.buf, pCtrl->EP0Buf, dfu.packet_len);
 
+			//delay(10);
+
 			dfu.data_pending = 1;
 			//print("out "); putDec(pCtrl->SetupPacket.wValue.W); print("\n");
-	        pUsbApi->core->StatusInStage(hUsb);
+	        //pUsbApi->core->StatusInStage(hUsb);
 			return LPC_OK;
 		}
 	}
@@ -456,6 +463,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		if(pCtrl->SetupPacket.bRequest == USB_REQ_DFU_GETSTATUS) {
 			dfu.status_req = 1;
 		}
+
 	}
 
 	if(event == USB_EVT_SETUP && (pCtrl->SetupPacket.bmRequestType.B & 0x21)) {
@@ -465,13 +473,19 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		case USB_REQ_DFU_DETACH:
 			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 			pCtrl->EP0Data.Count = 0;
-			pUsbApi->core->DataInStage(hUsb);
+			//pUsbApi->core->DataInStage(hUsb);
 			return LPC_OK;
+
 		case USB_REQ_DFU_GETSTATUS:{
 			DFU_STATUS_T dfu_req_get_status;
 			//print("st\n");
+			//putDec(__get_IPSR()); print("\n");
 
-			dfu_req_get_status.bwPollTimeout[0] = 10;
+			//int a = u32Milliseconds;
+	        process_dfu();
+			//putDec(u32Milliseconds-a); print("\n");
+
+			dfu_req_get_status.bwPollTimeout[0] = 8;
 			dfu_req_get_status.bwPollTimeout[1] = 0;
 			dfu_req_get_status.bwPollTimeout[2] = 0;
 
@@ -483,7 +497,12 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 			memcpy(pCtrl->EP0Data.pData, &dfu_req_get_status, sizeof(dfu_req_get_status));
 	        pCtrl->EP0Data.Count = sizeof(dfu_req_get_status);
 
+	        //process_dfu();
+
 	        pUsbApi->core->DataInStage(hUsb);
+
+
+
 		}
 	        return LPC_OK;
 
@@ -499,7 +518,7 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		{
 			dfu.block_num = pCtrl->SetupPacket.wValue.W;
 
-			uint8_t* src_addr = DFU_DEST_BASE + (dfu.block_num * USB_DFU_XFER_SIZE);
+			uint8_t* src_addr = (uint8_t*)DFU_DEST_BASE + (dfu.block_num * USB_DFU_XFER_SIZE);
 		    //*pBuff = (uint8_t*)src_addr;
 		    pCtrl->EP0Data.pData = pCtrl->EP0Buf;
 		    if (dfu.block_num == DFU_MAX_BLOCKS) {
@@ -516,9 +535,12 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		    pCtrl->EP0Data.Count = pCtrl->SetupPacket.wLength;
 		    pUsbApi->core->DataInStage(hUsb);
 
+
 			return LPC_OK;
 		}
 		case USB_REQ_DFU_DNLOAD:
+
+
 			//print("dload "); putDec(pCtrl->SetupPacket.wLength); print("\n");
 			if(pCtrl->SetupPacket.wLength == 0 && dfu.complete) {
 				dfu.dfu_state = DFU_STATE_dfuIDLE;
@@ -528,7 +550,9 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 
 			pCtrl->EP0Data.Count = pCtrl->SetupPacket.wLength;
 			pCtrl->EP0Data.pData = pCtrl->EP0Buf;
-	        pUsbApi->core->DataOutStage(hUsb);
+
+
+	        //pUsbApi->core->DataOutStage(hUsb);
 			return LPC_OK;
 		break;
 
@@ -613,8 +637,16 @@ void process_dfu() {
 //		putDec(p); print(" ");
 		//putDec(dest_addr);
 		//print("\n");
-//		printbuf(dfu.buf, 64);
+		//printbuf(dfu.buf, 64);
 
+		if(dfu.block_num == 0) {
+			print("Boot> Erasing...\n");
+			prepare_sector_usb(FIRST_USER_SECTOR,MAX_USER_SECTOR-1, CCLK);
+			erase_sector_usb(FIRST_USER_SECTOR, MAX_USER_SECTOR-1, CCLK);
+		}
+		if(dfu.block_num == 1) {
+			print("Boot> Flashing...\n");
+		}
 		dfu.data_pending = 0;
 
 		//while(!dfu.status_req);
@@ -631,6 +663,9 @@ void process_dfu() {
 			if(write_flash((unsigned*) dest_addr, dfu.buf, dfu.packet_len,	last) == 1) {
 				dfu.dfu_status = DFU_STATUS_errPROG;
 			}
+			//delay(40);
+
+
 			if(last) {
 				dfu.complete = 1;
 				dfu.dfu_state = DFU_STATE_dfuIDLE;
@@ -662,9 +697,30 @@ void process_dfu() {
 	}
 }
 
-/*****************************************************************************
- **   Main Function  main()
- *****************************************************************************/
+
+void loop() {
+	while (1) {
+
+		if((u32Milliseconds & 511) < 256) {
+			LPC_GPIO->B0[1] = 1;
+		} else
+		if((u32Milliseconds & 511) > 256) {
+			LPC_GPIO->B0[1] = 0;
+		}
+
+		//process_dfu();
+
+		if(u32Milliseconds > 10000 && dfu.dfu_state == DFU_STATE_dfuIDLE) {
+			if(user_code_present()) {
+				reset_system();
+			}
+			u32Milliseconds = 0;
+		}
+
+
+	}
+}
+
 int main(void) {
 	USBD_API_INIT_PARAM_T usb_param;
 	USB_CORE_DESCS_T desc;
@@ -677,8 +733,6 @@ int main(void) {
 
 	/* Setup UART for 115.2K, 8 data bits, no parity, 1 stop bit */
 	uart_init();
-
-
 
 	UARTSend((uint8_t *) "\r\nBoot>\r\n", 9);
 
@@ -697,7 +751,7 @@ int main(void) {
 	usb_param.usb_reg_base = LPC_USB_BASE;
 	usb_param.mem_base = 0x10001000;
 	usb_param.mem_size = 0x800;
-	usb_param.max_num_ep = 4;
+	usb_param.max_num_ep = 2;
 	//usb_param.USB_Configure_Event = USB_Configure_Event;
 
 	/* Initialize Descriptor pointers */
@@ -730,43 +784,16 @@ int main(void) {
 	LPC_GPIO->B0[21] = 1;
 	LPC_GPIO->DIR[0] |= (1<<1);
 
-	while (1) {
-
-		if((u32Milliseconds & 511) < 256) {
-			LPC_GPIO->B0[1] = 1;
-		} else
-		if((u32Milliseconds & 511) > 256) {
-			LPC_GPIO->B0[1] = 0;
-		}
-
-		process_dfu();
-
-		if(u32Milliseconds > 10000 && dfu.dfu_state == DFU_STATE_dfuIDLE) {
-			if(user_code_present()) {
-				print("r\n");
-				NVIC_SystemReset();
-			}
-			u32Milliseconds = 0;
-		}
-
-
-
-//		if(!LPC_GPIO->B0[1]) {
-//			NVIC_SystemReset();
-//		}
-
-	}
+	loop();
 }
 
-/**********************************************************************
- ** Function name:
- **
- ** Description:
- **
- ** Parameters:
- **
- ** Returned value:
- **********************************************************************/
+void reset_system() {
+	print("Boot> Reset\n");
+	delay(10);
+	NVIC_SystemReset();
+}
+
+
 void SysTick_Handler(void) {
 	u32Milliseconds++;
 

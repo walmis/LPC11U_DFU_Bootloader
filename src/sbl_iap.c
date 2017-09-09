@@ -36,6 +36,10 @@ void erase_sector_usb(unsigned start_sector,unsigned end_sector,unsigned cclk);
 void prepare_sector_usb(unsigned start_sector,unsigned end_sector,unsigned cclk);
 void blank_check_sector(int i);
 
+extern void putDec(int i);
+extern void print(char* str);
+extern void putHex(int i);
+
 unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 {
   unsigned enabled_irqs;
@@ -54,7 +58,7 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 		/* We have accumulated enough bytes to trigger a flash write */
 		find_erase_prepare_sector(cclk, (unsigned) flash_address);
 		if (result_table[0] != CMD_SUCCESS) {
-
+			//print("Boot> Flash prep error: "); putDec(result_table[0]); print("\n");
 			//print("wr error0 "); putDec(result_table[0]); print("\n");
 			return 1;
 		}
@@ -62,7 +66,7 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 				FLASH_BUF_SIZE);
 		//putHex(flash_address); print("\n");
 		if (result_table[0] != CMD_SUCCESS) {
-			//print("wr error1 "); putDec(result_table[0]); print("\n");
+			//print("Boot> Flash write error: "); putDec(result_table[0]); print("\n");
 			return 1;
 		}
 
@@ -72,7 +76,7 @@ unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last)
 //			return 1;
 //		}
 		if(memcmp(flash_address, flash_buf, FLASH_BUF_SIZE) != 0) {
-			print("wr cmp error"); print("\n");
+			//print("Boot> Memory compare error @ "); putHex(flash_address); print("\n");
 			return 1;
 		}
 
@@ -97,18 +101,18 @@ void find_erase_prepare_sector(unsigned cclk, unsigned flash_address)
             if( flash_address == SECTOR_0_START_ADDR + (SECTOR_SIZE * i))
             {
                 //putHex(flash_address); print("\n");
-            	prepare_sector_usb(i,i,cclk);
-                if (result_table[0] != CMD_SUCCESS) {
-                	return;
-                }
-                erase_sector_usb(i,i,cclk);
-                if (result_table[0] != CMD_SUCCESS) {
-                	return;
-                }
-                blank_check_sector(i);
-                if (result_table[0] != CMD_SUCCESS) {
-                	return;
-                }
+//            	prepare_sector_usb(i,i,cclk);
+//                if (result_table[0] != CMD_SUCCESS) {
+//                	return;
+//                }
+//                erase_sector_usb(i,i,cclk);
+//                if (result_table[0] != CMD_SUCCESS) {
+//                	return;
+//                }
+//                blank_check_sector(i);
+//                if (result_table[0] != CMD_SUCCESS) {
+//                	return;
+//                }
 
             }
             prepare_sector_usb(i,i,cclk);

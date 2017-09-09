@@ -45,9 +45,19 @@
 
 #define CCLK 48000 					/* 48,000 KHz for IAP call */
 
+/* DFU boot definitions */
+#define DFU_DEST_BASE         0x1000
+#define DFU_MAX_IMAGE_LEN     (28 * 1024)
+#define DFU_MAX_BLOCKS        (DFU_MAX_IMAGE_LEN/USB_DFU_XFER_SIZE)
+
+
+
+#define FLASH_BUF_SIZE 256
+
 #define SECTOR_0_START_ADDR 0
 #define SECTOR_SIZE 4096
 #define MAX_USER_SECTOR ((DFU_MAX_IMAGE_LEN+0x1000)/SECTOR_SIZE)
+#define FIRST_USER_SECTOR (DFU_DEST_BASE/SECTOR_SIZE)
 //#define USER_FLASH_START (sector_start_map[USER_START_SECTOR])
 //#define USER_FLASH_END	 (sector_end_map[MAX_USER_SECTOR])
 //#define USER_FLASH_SIZE  ((USER_FLASH_END - USER_FLASH_START) + 1)

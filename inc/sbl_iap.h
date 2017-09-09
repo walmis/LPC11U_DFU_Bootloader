@@ -19,6 +19,8 @@
 extern const unsigned crp;
 
 unsigned write_flash(unsigned * dst, char * src, unsigned no_of_bytes, int last);
+void prepare_sector_usb(unsigned start_sector,unsigned end_sector,unsigned cclk);
+void erase_sector_usb(unsigned start_sector,unsigned end_sector, unsigned cclk);
 void erase_user_flash(void);
 void init_usb_iap(void);
 int user_code_present(void);
@@ -41,5 +43,7 @@ REINVOKE_ISP=57
 #define IAP_ADDRESS 0x1FFF1FF1
 
 #define UPDATE_REQD 133
+
+#define RAMFUNC __attribute((section(".fastcode")))
 
 #endif /* _SBL_IAP_H */

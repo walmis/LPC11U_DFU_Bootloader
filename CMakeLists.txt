@@ -8,13 +8,13 @@ set(CMAKE_SYSTEM_NAME Generic CACHE INTERNAL "")
 set(CMAKE_SYSTEM_PROCESSOR ${CORTEX_TYPE} CACHE INTERNAL "")
 
 SET(ARM_COMMON_FLAGS "-mthumb -ffunction-sections -fdata-sections -g3 -fno-common -fmessage-length=0 -Os")
-SET(ARM_COMMON_LD_FLAGS "-Os -flto -nostartfiles -Wl,-gc-sections --specs=nano.specs -T ${CMAKE_CURRENT_SOURCE_DIR}/lpc11xx/linkscript.ld")
+SET(ARM_COMMON_LD_FLAGS "-Os -mlong-calls -flto -nostartfiles -Wl,-gc-sections --specs=nano.specs -T ${CMAKE_CURRENT_SOURCE_DIR}/lpc11xx/linkscript.ld")
 SET(ASM_OPTIONS "-x assembler-with-cpp")
 
 SET(COMMON_FLAGS "${ARM_COMMON_FLAGS} -mcpu=cortex-m0")
 
 SET(CMAKE_CXX_FLAGS "${COMMON_FLAGS} -flto -std=gnu++11 -fno-rtti -fno-exceptions" CACHE INTERNAL "")
-SET(CMAKE_C_FLAGS "${COMMON_FLAGS} -flto -std=gnu99" CACHE INTERNAL "")
+SET(CMAKE_C_FLAGS "${COMMON_FLAGS} -mlong-calls -flto -std=gnu99" CACHE INTERNAL "")
 set(CMAKE_EXE_LINKER_FLAGS "${ARM_COMMON_LD_FLAGS}" CACHE INTERNAL "")
 
 SET(CMAKE_CXX_COMPILER arm-none-eabi-g++ CACHE INTERNAL "" )

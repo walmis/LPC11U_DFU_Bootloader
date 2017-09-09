@@ -9,7 +9,7 @@ MEMORY
 
 	FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 4k
 
-    RAM (rwx) : ORIGIN = 0x100000C0, LENGTH = 3k-0xC0
+    RAM (rwx) : ORIGIN = 0x100000C0, LENGTH = 6k-0xC0
 }
 
 
@@ -180,13 +180,11 @@ SECTIONS
 	} >FLASH
 	
 
-	.fastcode :
+	.fastcode : ALIGN (8)
 	{
 		__fastcode_load = LOADADDR (.fastcode);		/* address in FLASH */
 		__fastcode_start = .;						/* address in RAM */
 		
-		/* used for vectors remapped to RAM */
-		KEEP(*(.vectors))
 		KEEP(*(.fastcode))
 		
 		*(.glue_7t)		/* TODO: are these usefull here or better only in .text? */
@@ -205,21 +203,6 @@ SECTIONS
 	__exidx_end = .;
 
 
-	.fastcode :
-	{
-		__fastcode_load = LOADADDR (.fastcode);		/* address in FLASH */
-		__fastcode_start = .;						/* address in RAM */
-		
-		/* used for vectors remapped to RAM */
-		KEEP(*(.vectors))
-		KEEP(*(.fastcode))
-		
-		*(.glue_7t)		/* TODO: are these usefull here or better only in .text? */
-		*(.glue_7)
-		
-		. = ALIGN (4);
-		__fastcode_end = .;
-	} >RAM AT>FLASH
 
 
 	/* initialized variables */
@@ -233,7 +216,7 @@ SECTIONS
 		*(.shdata)
 		
 		*(.data .data.* .gnu.linkonce.d.*)
-		
+		/*KEEP(*(.fastcode))*/
 		. = ALIGN (4);
 		_edata = .;
 	} >RAM AT>FLASH
