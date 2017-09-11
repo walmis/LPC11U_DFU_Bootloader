@@ -540,10 +540,14 @@ ErrorCode_t dfu_ep0(USBD_HANDLE_T hUsb, void* data, uint32_t event) {
 		}
 		case USB_REQ_DFU_DNLOAD:
 
-
 			//print("dload "); putDec(pCtrl->SetupPacket.wLength); print("\n");
-			if(pCtrl->SetupPacket.wLength == 0 && dfu.complete) {
-				dfu.dfu_state = DFU_STATE_dfuIDLE;
+			if(pCtrl->SetupPacket.wLength == 0 && dfu.block_num != 0) {
+				dfu.packet_len = 0;
+				dfu.data_pending = 1;
+				dfu.status_req = 1;
+
+				dfu.dfu_state = DFU_STATE_dfuDNLOAD_SYNC;
+				process_dfu();
 			} else {
 				dfu.dfu_state = DFU_STATE_dfuDNLOAD_SYNC;
 			}
@@ -626,6 +630,10 @@ void HardFault_Handler(void) //__attribute__((naked))
 }
 
 void process_dfu() {
+	if(dfu.dfu_state == DFU_STATE_dfuDNLOAD_IDLE && dfu.complete) {
+		dfu.dfu_state = DFU_STATE_dfuIDLE;
+	}
+
 	if(dfu.dfu_state == DFU_STATE_dfuDNLOAD_SYNC && dfu.data_pending && dfu.status_req) {
 		uint32_t b = dfu.block_num;
 		uint32_t p = dfu.packet_len;
@@ -668,7 +676,7 @@ void process_dfu() {
 
 			if(last) {
 				dfu.complete = 1;
-				dfu.dfu_state = DFU_STATE_dfuIDLE;
+
 			}
 		}
 
@@ -679,9 +687,9 @@ void process_dfu() {
 				if(write_flash((unsigned*) dest_addr, dfu.buf, 0, 1) == 1) {
 					dfu.dfu_status = DFU_STATUS_errPROG;
 				}
+				dfu.complete = 1;
 			}
-			dfu.dfu_state = DFU_STATE_dfuIDLE;
-			dfu.complete = 1;
+
 
 		} else {
 			dfu.dfu_state = DFU_STATE_dfuDNLOAD_IDLE;
@@ -692,6 +700,7 @@ void process_dfu() {
 				dfu.dfu_status = DFU_STATUS_errVERIFY;
 				print("Boot> Verification failed\n");
 			}
+			dfu.dfu_state = DFU_STATE_dfuDNLOAD_IDLE;
 			LPC_PMU->GPREG3 = 0;
 		}
 	}
